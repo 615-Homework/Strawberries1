@@ -1,0 +1,420 @@
+---
+title: "Strawberries1"
+author: "Chloe Singer"
+date: "2024-10-09"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#| label: load libraries and set options
+#| warning: false
+#| message: false
+
+library(knitr)  
+library(kableExtra)
+library(tidyverse)
+library(stringr)
+
+options(echo = FALSE, digits = 3, 
+        scipen = 999, warn = FALSE, message = FALSE)
+```
+
+
+```{r}
+## Step 1: Import data set ##
+
+strawberry <- read_csv("strawberries25_v3.csv", col_names = TRUE)
+```
+
+
+```{r}
+## Step 2: Check and make sure each row is associated with a specific state. ##
+
+#| label: explore organization 1 
+
+
+state_all <- strawberry |> distinct(State)
+
+state_all1 <- strawberry |> group_by(State) |> count()
+
+# Each row is associated with a specific state #
+
+if(sum(state_all1$n) == dim(strawberry)[1]){print("Yes, each row in the data set is associated with a specific state.")}
+```
+
+
+```{r}
+## Step 3: Because the dataset contains some columns filled entirely with missing values (NA), I can create a function to remove columns that contain only a single unique value. This function is named drop_one_value_col ##
+
+#|label: function def - drop 1-item columns
+
+drop_one_value_col <- function(df){   # Takes the entire dataframe #
+drop <- NULL  
+
+# Check each column to see if it contains only one unique value. #
+
+for(i in 1:dim(df)[2]){  
+if((df |> distinct(df[,i]) |> count()) == 1){
+drop = c(drop, i)
+} }
+
+
+if(is.null(drop)){return("none")}else{
+
+   print("Columns dropped:")
+   print(colnames(df)[drop])
+   strawberry <- df[, -1*drop]
+   }
+}
+
+# Now I will use the function: #
+
+strawberry <- drop_one_value_col(strawberry)
+
+drop_one_value_col(strawberry)
+```
+
+
+```{r}
+## Step 4: By examining the data, I noticed that the 'Geo Level' column at the county level doesn’t provide meaningful information, so I can remove it. ##
+
+#| label: ditch the counties
+
+unique(strawberry$`Geo Level`)
+
+strawberry <- strawberry |> 
+  filter(`Geo Level`== "NATIONAL" | `Geo Level`== "STATE")
+```
+
+
+## Now I will examine the rest of the columns ##
+
+ 
+```{r}
+## Step 5: The 'Program' column divides the data into two primary categories: CENSUS data, which focuses on strawberry sales, and SURVEY data, which covers the chemicals used on strawberries. I can separate these into two distinct data frames: straw_cem for the CENSUS data and straw_sur for the SURVEY data.  ##
+
+#|label: split srawberry into census and survey pieces
+
+straw_cen <- strawberry |> filter(Program=="CENSUS")
+straw_cen <- straw_cen |> drop_one_value_col()
+
+straw_sur <- strawberry |> filter(Program == "SURVEY")
+straw_sur <- straw_sur %>%  drop_one_value_col()
+
+nrow(strawberry) == (nrow(straw_sur) + nrow(straw_cen))
+```
+
+
+```{r}
+## Step 6: I will start by exploring the survey data. I observe that the 'Domain Category' column holds a lot of details, including the chemical involved, its purpose, name, and associated number. To make the data clearer, I can separate the chemical name and number into two new columns: chemical_name and chemical_num.  ##
+
+straw_sur <- straw_sur %>%
+  mutate(`Domain Category` = gsub(".*: \\(([^=]+) = ([0-9]+)\\)", "\\1,\\2", `Domain Category`)) %>%
+  separate(`Domain Category`, into = c("chemical_name", "chemical_num"), sep = ",") %>%
+  mutate(chemical_name = trimws(chemical_name),  
+         chemical_num = as.numeric(trimws(chemical_num)))  
+```
+
+
+```{r}
+## Step 7: This looks a little bit better, but the "Domain" column still holds multiple pieces of information, specifically whether it relates to a chemical and its intended use. I can further split this into two columns: domain and use. However I will retain the domain column since it also contains some rows labeled as "total" data.  ##
+
+straw_sur <- straw_sur %>%
+  separate(Domain, into = c("Domain", "use"), sep = ",", extra = "merge")
+```
+
+
+```{r}
+## Step 8: With "Domain Category" sorted, I can now turn to another information-heavy column, "Data Item." This column primarily describes what is being measured in the "Value" column. To make things clearer, I will extract the measurement units into a new column called measurement. I can use the mutate function to split the data at the word "MEASURED," which appears in all rows with measurement information. Additionally, "Data Item" includes categories like processing, fresh market, or production. I will create a separate column for these categories by splitting the data at a hyphen. ##
+
+straw_sur <- straw_sur %>%
+  # I extract the measurement portion first and remove it from Data Item #
+  mutate(measurement = str_extract(`Data Item`, "(?<=MEASURED\\s).*")) %>%
+  mutate(`Data Item` = str_remove(`Data Item`, "MEASURED.*")) %>%
+  
+
+  separate(`Data Item`, into = c("Data Item", "category"), sep = "[,-]", extra = "merge", fill = "right")
+```
+
+
+```{r}
+## Step 9: I noticed that the measurement column was moved to the end of the data frame after using the mutate function. To improve the organization, I will reposition it right after the 'Category' column for better clarity. ##
+
+straw_sur <- straw_sur %>%
+  select(1:7, 13, 8:12)
+```
+ 
+ 
+```{r}
+## Step 10: I also noticed that the measurement column includes some unnecessary words, such as "IN." I will remove those to ensure the column only displays the units. ##
+
+straw_sur <- straw_sur %>%
+  mutate(measurement = gsub("\\bIN\\b", "", measurement)) %>%  
+  mutate(measurement = trimws(measurement))  
+```
+ 
+
+```{r}
+## Step 11: I noticed that the value column is currently at the end of the data frame. It would be more logical to place it right after the measurement column, so I will move it accordingly.  ##
+
+straw_sur <- straw_sur %>%
+  select(1:8, 13, 9:12)
+```
+ 
+
+```{r}
+## Step 12: My data item column now contains only one value: "strawberries." However, using the unique function reveals that some entries have trailing spaces while others do not, causing R to treat them as two distinct values. As a result, my drop_one_value function won't work properly. To resolve this, I will remove the entire column using a pipe. ##
+
+straw_sur <- straw_sur %>%
+  select(-`Data Item`)
+```
+
+
+```{r}
+## Step 13: While reviewing the data, I noticed that some values in the "Category" column have unnecessary commas at the end. I can remove these to clean up the data. ##
+
+straw_sur$category <- gsub(",", "", straw_sur$category)
+```
+
+
+```{r}
+## Step 14: Finally, I will split the data into two tables based on the values in the domain column—one for "total" and another for "chemical." I will name these tables sur_total and sur_chem respectively. ##
+
+sur_total <- straw_sur %>% filter(Domain == "TOTAL")
+sur_chem <- straw_sur %>% filter(Domain == "CHEMICAL")
+sur_total = drop_one_value_col(sur_total)
+sur_chem = drop_one_value_col(sur_chem)
+```
+
+
+```{r}
+## Step 15: Next, I'm going to shift my focus to the Census data. Here, I again notice that the Data Item column holds multiple pieces of information. ##
+
+#| label: straw_cen split cols
+
+straw_cen <- straw_cen |>
+  separate_wider_delim(  cols = `Data Item`,
+                         delim = " - ",
+                         names = c("strawberries",
+                                 "Category"),
+                         too_many = "error",
+                         too_few = "align_start"
+                       )
+```
+
+
+```{r}
+## Step 16: Next, I want to create a separate table specifically for organic strawberry sales. To do this, I will add an organic column to the straw_cen data frame and filter for rows that contain the word "ORGANIC" in that column. Upon review, I found that the new column only has two categories: NA and Organic. After isolating the organic rows into a new table called organic_cen, the remaining rows will only contain NAs, which I can remove using the drop function. ##
+
+#| label: isolate organic
+
+
+straw_cen <- straw_cen |>
+  separate_wider_delim(  cols = strawberries,
+                         delim = ", ",
+                         names = c("strawberries",
+                                 "ORGANIC",
+                                 "organic_detail"),
+                         
+                         too_many = "error",
+                         too_few = "align_start"
+                       )
+
+
+straw_cen <- straw_cen |> drop_one_value_col()
+
+# How many organic rows are there? #
+
+organic_cen <- straw_cen |> filter(ORGANIC == "ORGANIC")
+
+sum(is.na(straw_cen$ORGANIC))
+
+straw_cen <- straw_cen[(is.na(straw_cen$ORGANIC)),]
+
+
+straw_cen <- straw_cen |> drop_one_value_col()
+```
+
+
+```{r}
+## Step 17: Now, I can split the Category column in the straw_cen data frame into two new columns: measure and bearing, to better organize the bearing type. ##
+
+#| label: explore straw_cen$Category
+
+straw_cen <- straw_cen |>
+  separate_wider_delim(  cols = `Category`,
+                         delim = " ",
+                         names = c("COL1",
+                                 "COL2"),
+                         too_many = "merge",
+                         too_few = "align_start"
+                       )
+
+
+straw_cen$COL2 <- str_replace(straw_cen$COL2,"WITH ","")
+
+straw_cen <- straw_cen |> rename(Measure = COL1, Bearing_type= COL2)
+```
+
+
+```{r}
+## Step 18: Next, I noticed that the Domain Category column, similar to the one in the straw_sur data frame, holds a lot of information. I can split it into two separate columns: domain and area_grown. ##
+
+#| label: explore straw_cen$Domain & Domain Category
+
+
+straw_cen <- straw_cen |> rename(size_bracket = `Domain Category`)
+
+straw_cen$size_bracket <- str_replace(straw_cen$size_bracket, "NOT SPECIFIED", "TOTAL")
+
+straw_cen$size_bracket <- str_replace(straw_cen$size_bracket, "AREA GROWN: ", "")
+```
+
+
+```{r}
+## Step 19: Moving on to the organic census data, I start by removing all the columns that contain only a single unique value.  ##
+
+organic_cen <- organic_cen |> drop_one_value_col()
+```
+
+
+```{r}
+## Step 20: Next, I will clean the Category column, just like I did in the straw_sur data. I will split it into separate columns at the word "measure" for better organization. ##
+
+organic_cen <- organic_cen %>%
+  separate(Category, into = c("Category", "measurement"), sep = " MEASURED ", extra = "merge", fill = "right")
+```
+
+
+```{r}
+## Step 21: I now need to get rid of the occurrences of commas and "IN" from the new column. ##
+
+organic_cen$Category <- gsub(",", "", organic_cen$Category)
+organic_cen$measurement <- gsub("IN", "", organic_cen$measurement, ignore.case = TRUE)
+```
+
+
+```{r}
+## Step 22: I now need to get rid of the occurrences of (D) and (Z) in the value column and replace them with NA. ##
+
+straw_cen$Value[straw_cen$Value == "(D)"] <- NA
+straw_cen$Value[straw_cen$Value == "(Z)"] <- NA
+```
+
+
+```{r}
+## Step 23: I now have four cleaned tables: sur_chem containing chemical data, sur_total with the total survey data, straw_cen for non-organic sales data, and organic_cen for organic sales data. Next, I will work on filling in some of the missing values in the Value column. To start, I need to ensure that all entries in the Value column are numeric. ##
+
+straw_cen <- straw_cen %>%
+  mutate(Value = as.numeric(gsub(",", "", Value)))
+```
+
+
+```{r}
+## Step 24: This process took some time, and I used ChatGPT to help with parts of it. However, I successfully created a function that calculates ratios for each state by using the total acres grown and total acres bearing. The function then applies these ratios to estimate the Value for entries where total acres grown had NA values, matching them by size bracket. While it’s not perfect, I reviewed a few results, and they appear reasonably accurate. ## 
+
+fill_na_bearing_values <- function(df) {
+  # Creating a copy of the data frame so I do not have to edit the original version #
+  df_filled <- df
+  
+  states <- unique(df$State)
+  
+  for (state in states) {
+    # Filter the data for the current state #
+    state_data <- df %>% filter(State == state)
+    
+    # Taking out the GROWN and BEARING values #
+    grown_value <- state_data %>%
+      filter(Bearing_type == "GROWN", Domain == "TOTAL", size_bracket == "TOTAL") %>%
+      pull(Value)
+    
+    bearing_value <- state_data %>%
+      filter(Bearing_type == "BEARING", Domain == "TOTAL", size_bracket == "TOTAL") %>%
+      pull(Value)
+    
+    # Now calculating the total percentage of bearing strawberries #
+    if (length(grown_value) > 0 && length(bearing_value) > 0 && grown_value > 0) {
+      percentage <- bearing_value / grown_value
+    } else {
+      next
+    }
+    
+    # Now filling in NA values for the BEARING rows where the size_bracket is the same #
+    df_filled <- df_filled %>%
+      mutate(Value = ifelse(is.na(Value) & Bearing_type == "BEARING" & State == state,
+                            percentage * Value[which(Bearing_type == "GROWN" & 
+                                                       size_bracket == size_bracket & 
+                                                       State == state)],
+                            Value))
+  }
+  
+  return(df_filled)
+}
+```
+
+
+```{r}
+## Step 25: And now I will now the same thing for the non-bearing strawberries ##
+
+fill_na_non_bearing_values <- function(df) {
+  # Creating a copy of the data frame so I do not have to edit the original version ##
+  df_filled <- df
+  
+  states <- unique(df$State)
+  
+  for (state in states) {
+    # Filter the data for the current state #
+    state_data <- df %>% filter(State == state)
+    
+    # Taking out the GROWN and NON-BEARING values #
+    grown_value <- state_data %>%
+      filter(Bearing_type == "GROWN", Domain == "TOTAL", size_bracket == "TOTAL") %>%
+      pull(Value)
+    
+    non_bearing_value <- state_data %>%
+      filter(Bearing_type == "NON-BEARING", Domain == "TOTAL", size_bracket == "TOTAL") %>%
+      pull(Value)
+    
+    # Now calculating the total percentage of non-bearing strawberries #
+    if (length(grown_value) > 0 && length(non_bearing_value) > 0 && grown_value > 0) {
+      percentage <- non_bearing_value / grown_value
+    } else {
+      next  
+    }
+    
+    # Now filling in NA values for the NONBEARING rows where the size_bracket is the same #
+    df_filled <- df_filled %>%
+      mutate(Value = ifelse(is.na(Value) & Bearing_type == "NON-BEARING" & State == state,
+                            percentage * Value[which(Bearing_type == "GROWN" & 
+                                                       size_bracket == size_bracket & 
+                                                       State == state)],
+                            Value))
+  }
+  
+  return(df_filled)
+}
+```
+
+
+```{r}
+## Step 26: Finally, I will apply both functions to the straw_cen data to fill in some of the NA values using the appropriate ratios based on the total figures. It's important to note that the function won't work for states that lack total values for certain size brackets. ##
+
+straw_cen = fill_na_bearing_values(straw_cen)
+straw_cen = fill_na_non_bearing_values(straw_cen)
+```
+
+
+
+```{r}
+## Step 27: Write the data sets into csv files. ##
+
+write.csv(sur_chem, "cleaned_survey_chemical_data.csv")
+write.csv(sur_total, "cleaned_survey_total_data.csv")
+
+write.csv(straw_cen, "cleaned_census_nonorganic_data.csv")
+write.csv(organic_cen, "cleaned_census_organic_data.csv")
+```
